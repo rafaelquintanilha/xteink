@@ -706,3 +706,25 @@ def test_prefixed_rolled_back_version_finds_the_bare_upload(device_client, devs,
     assert "firmware" not in r.json()
     assert [f.id for f in fws.rolled_back(dev.id)] == [fw.id]
     assert fws.offered(dev.id) is None
+
+
+# --- the device files an item as "Title - Author" ------------------------------------
+
+
+def test_queue_title_is_title_dash_author(device_client, lib, devs):
+    from xteink.server.routes_device import _file_title
+
+    assert _file_title("On Liberty", "John Stuart Mill") == "On Liberty - John Stuart Mill"
+    assert _file_title("On Liberty", "") == "On Liberty"
+    assert _file_title("On Liberty", "   ") == "On Liberty"
+    assert _file_title("Notes by Ada Lovelace", "ada lovelace") == "Notes by Ada Lovelace"
+    assert _file_title("T", " A   B ") == "T - A B"
+
+    dev, raw = register(devs)
+    signed = lib.add(b"one", title="On Liberty", kind="book", format="txt", author="J. S. Mill")
+    plain = lib.add(b"two", title="Loose Notes", kind="article", format="txt", author="")
+    devs.queue_item(dev.id, signed.item.id)
+    devs.queue_item(dev.id, plain.item.id)
+    r = device_client.get("/api/device/queue", headers=h(raw))
+    assert r.status_code == 200, r.text
+    assert [i["title"] for i in r.json()["items"]] == ["On Liberty - J. S. Mill", "Loose Notes"]

@@ -199,3 +199,13 @@ def test_boxes_that_are_mostly_links_are_dropped_but_a_linked_sentence_is_kept()
     assert "Body one." in a.html and "Body two." in a.html
     assert "Read the whole paper" in a.html
     assert "Language 3" not in a.html and "Category two" not in a.html
+
+
+def test_site_stands_in_for_a_missing_author():
+    body = f"<body><div><p>{PARA}{PARA}{PARA}</p></div></body>"
+    head = "<head><meta property='og:site_name' content='The Example Review'></head>"
+    named = extract(f"<html>{head}{body}</html>", "https://www.example.org/a")
+    assert (named.author, named.site) == ("", "The Example Review")
+    bare = extract(f"<html>{body}</html>", "https://www.example.org/a")
+    assert bare.site == "example.org"
+    assert extract(f"<html>{body}</html>").site == ""

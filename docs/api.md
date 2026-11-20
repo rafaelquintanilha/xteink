@@ -174,8 +174,8 @@ A blank `title` or an invalid `kind` returns `422` with a plain `detail`.
 
 Save a web page by its address. The server fetches the page, keeps only the
 article and converts it to EPUB. JSON body: `url` (required), `title` (default:
-the page's own title), `author` (default: the page's author, when it names
-one), `kind` (default `article`) and `device` (a device id or a unique name:
+the page's own title), `author` (default: the page's author; when it names
+none, the site's name, else its host), `kind` (default `article`) and `device` (a device id or a unique name:
 also queue the item for that reader).
 
 ```bash

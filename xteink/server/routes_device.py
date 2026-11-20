@@ -239,6 +239,18 @@ def post_status(
     return out
 
 
+def _file_title(title: str, author: str) -> str:
+    """The name the device files an item under: "Title - Author".
+
+    The device builds the file name from this one field. A folder of books and essays is
+    usually kept as "Title - Author", and a delivered file should sort in with the rest.
+    """
+    author = " ".join(author.split())
+    if not author or author.casefold() in title.casefold():
+        return title
+    return f"{title} - {author}"
+
+
 @router.get("/queue")
 def get_queue(
     request: Request,
@@ -259,7 +271,7 @@ def get_queue(
         items.append(
             {
                 "id": entry.item_id,
-                "title": entry.title,
+                "title": _file_title(entry.title, services.library.get(entry.item_id).author),
                 "size": entry.size,
                 "sha256": entry.sha256,
                 "format": entry.format,

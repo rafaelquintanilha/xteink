@@ -91,7 +91,8 @@ class ArticleError(CoreError):
 @dataclass(frozen=True)
 class Article:
     title: str
-    author: str
+    author: str  # "" when the page names none
+    site: str  # the site's name, else its host: stands in for a missing author
     html: str  # a complete UTF-8 HTML document holding only the article
     text_chars: int
 
@@ -446,6 +447,15 @@ def _author(builder: _TreeBuilder) -> str:
     return ""
 
 
+def _site(builder: _TreeBuilder, url: str) -> str:
+    """Where the page is from, for a page that names no author: the site name, else the host."""
+    name = _WS.sub(" ", builder.meta.get("og:site_name", "")).strip()
+    if name:
+        return name[:200]
+    host = urlsplit(url).hostname or ""
+    return host[4:] if host.startswith("www.") else host
+
+
 def extract(html: str, url: str = "", *, min_chars: int = MIN_ARTICLE_CHARS) -> Article:
     """The article in ``html`` as a clean document. ``url`` resolves relative links."""
     builder = _TreeBuilder()
@@ -471,4 +481,10 @@ def extract(html: str, url: str = "", *, min_chars: int = MIN_ARTICLE_CHARS) -> 
         + "\n".join(blocks)
         + "\n</body></html>\n"
     )
-    return Article(title=title, author=_author(builder), html=document, text_chars=text_chars)
+    return Article(
+        title=title,
+        author=_author(builder),
+        site=_site(builder, url),
+        html=document,
+        text_chars=text_chars,
+    )

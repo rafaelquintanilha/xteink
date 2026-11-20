@@ -283,7 +283,8 @@ def capture_and_add(
             raise CaptureError(str(exc), exc.code) from exc
         data, filename = article.html.encode("utf-8"), "article.html"
         given_title = given_title or article.title
-        author = author or article.author
+        # No author on the page: the site stands in, so the file can still be told apart.
+        author = author or article.author or article.site
         default_kind = "article"
     elif page.content_type in _MARKDOWN_TYPES or path.endswith((".md", ".markdown")):
         data = _decode(page).encode("utf-8")

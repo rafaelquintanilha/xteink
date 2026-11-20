@@ -352,3 +352,19 @@ def test_default_fetcher_is_the_guarded_fetch(library, monkeypatch):
         capture.capture_and_add(library, "http://192.168.1.1/admin")
     assert seen["url"] == "http://192.168.1.1/admin"
     assert "resolve" not in seen  # the public-address guard is never swapped out here
+
+
+def test_a_page_without_an_author_is_filed_under_its_site(library, fake_pandoc_log):
+    r = capture.capture_and_add(
+        library,
+        "https://www.example.org/p",
+        fetcher=serve("https://www.example.org/p", PAGE.encode(), "text/html"),
+    )
+    assert r.item.author == "example.org"
+    signed = PAGE.replace("<head>", "<head><meta name='author' content='Ada Lovelace'>")
+    r2 = capture.capture_and_add(
+        library,
+        "https://www.example.org/q",
+        fetcher=serve("https://www.example.org/q", signed.encode(), "text/html"),
+    )
+    assert r2.item.author == "Ada Lovelace"

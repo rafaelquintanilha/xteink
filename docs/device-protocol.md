@@ -151,6 +151,12 @@ Response `200`:
 }
 ```
 
+`title` is the name the device files the item under. When the item has an
+author it is `Title - Author`, the usual naming of a folder of books and
+essays; otherwise it is the title alone. The device turns it into a file name
+and adds the format as the extension.
+
+
 - `items`: entries queued (not yet acked) for this device, in queue order.
   Each entry has `kind`, one of `book`, `article`, `transcript` or `newspaper`.
   An absent or unknown `kind` is treated as `book`. Firmware that knows the
