@@ -43,9 +43,9 @@ DEFAULT_ESPTOOL = "uvx esptool@latest"
 DEFAULT_CHIP = "esp32c3"
 # Plain HTTP on purpose: the LAN device app has no TLS certificate to pin. Requests
 # carry the per-device key and the device verifies each download by sha256; off the
-# LAN the device uses DEFAULT_TUNNEL_URL (HTTPS, pinned roots). docs/device-protocol.md
+# LAN a separate HTTPS endpoint can be configured with --tunnel-url.
 DEFAULT_LAN_URL = "http://xteink.local:8781"  # NOSONAR
-DEFAULT_TUNNEL_URL = "https://xteink.culture.dev"
+DEFAULT_TUNNEL_URL = ""
 DEFAULT_NETWORKS_FILE = "~/.config/xteink/networks.json"
 PROV_INSTRUCTION = (
     "On the device open Settings > System > Provision via USB "
@@ -587,7 +587,11 @@ def register_usb(nsub: argparse._SubParsersAction) -> None:
     p.add_argument("--no-networks", action="store_true", help="Send no Wi-Fi networks.")
     p.add_argument("--replace-networks", action="store_true", help="Replace saved networks.")
     p.add_argument("--lan-url", default=DEFAULT_LAN_URL, help="LAN server URL.")
-    p.add_argument("--tunnel-url", default=DEFAULT_TUNNEL_URL, help="Tunnel (https) server URL.")
+    p.add_argument(
+        "--tunnel-url",
+        default=DEFAULT_TUNNEL_URL,
+        help="Optional HTTPS device endpoint for remote sync.",
+    )
     p.add_argument("--apply", action="store_true", help="Actually mint the key and provision.")
     add_json(p)
     p.set_defaults(func=cmd_provision)

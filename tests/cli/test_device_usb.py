@@ -267,7 +267,7 @@ def test_provision_apply_happy_path(capsys, fakes, nets):
     assert msg["device_key"] == KEY
     assert msg["networks"] == [{"ssid": "home", "password": PASSWORD}]
     assert msg["lan_url"] == du.DEFAULT_LAN_URL
-    assert msg["tunnel_url"] == du.DEFAULT_TUNNEL_URL
+    assert msg["tunnel_url"] == ""
     assert tp.max_chunk <= 128
     assert tp.closed
     assert [c[:2] for c in fakes.client.calls] == [("POST", "/api/devices")]
