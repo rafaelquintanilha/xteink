@@ -133,6 +133,24 @@ Result (JSON text): `{"item": {"id": 7, "title": "...", "kind": "article",
 "format": "epub", "size": 18422}, "created": true, "queued": {...queue entry...}}`. `created`
 is `false` when identical bytes were already in the library.
 
+### save_url
+
+Save a web page by its address. The API server fetches it, keeps only the
+article and converts it to EPUB; a link to an EPUB, Markdown or text file is
+saved as it is. Arguments: `url` (required), `title`, `author`, `kind`, and
+`device` (an id or a unique name) to queue it for that reader.
+
+```json
+{"name": "save_url", "arguments": {"url": "https://example.org/essay", "device": "my-reader"}}
+```
+
+Result: `{"item": {...}, "created": true, "queued": {...queue entry...}}`, with
+`queued` only when `device` was given. The server only fetches public
+`http(s)` addresses. What it refuses, and the error codes, are in
+[`api.md`](api.md#post-apilibraryurl). When a site refuses the fetch
+(`fetch_failed (HTTP 502)`), fetch the page yourself and send its text with
+`push_file`.
+
 ### list_library
 
 List or search items. Arguments: `q` (searches title and author), `kind`
@@ -161,4 +179,5 @@ A failed call returns an MCP tool error whose message starts with a short code,
 for example `unknown_device`, `ambiguous_device`, `invalid_arguments`,
 `unreadable_path`, `missing_key`, or an API error such as
 `too_large (HTTP 413)`. The codes for rejected uploads are the ones in
-[`api.md`](api.md#post-apilibrary).
+[`api.md`](api.md#post-apilibrary), and those for `save_url` are in
+[`api.md`](api.md#post-apilibraryurl).

@@ -39,6 +39,27 @@ _SPECS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "save_url",
+        "description": (
+            "Save a web page to the xteink library by its URL. The server fetches the page, "
+            "keeps only the article and converts it to EPUB; a link to an EPUB, Markdown or "
+            "text file is saved as it is. Only public http(s) addresses are fetched. Pass "
+            "`device` to queue it for that device, so it downloads on its next sync."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "http(s) address of the page"},
+                "title": {"type": "string", "description": "overrides the page's own title"},
+                "author": {"type": "string"},
+                "kind": _KIND,
+                "device": _DEVICE,
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "list_library",
         "description": "List or search library items (title/author search with q).",
         "inputSchema": {
@@ -123,12 +144,30 @@ def _push_file(client: Client, a: dict) -> dict:
     return out
 
 
+def _save_url(client: Client, a: dict) -> dict:
+    if not str(a.get("url") or "").strip():
+        raise ToolError("invalid_arguments: url is required")
+    res = client.save_url(
+        a["url"],
+        title=a.get("title"),
+        author=a.get("author") or "",
+        kind=a.get("kind"),
+        device=a.get("device"),
+    )
+    out = {"item": _brief(res["item"]), "created": res["created"]}
+    if "queued" in res:
+        out["queued"] = res["queued"]
+    return out
+
+
 def call_tool(name: str, arguments: dict[str, Any] | None, client_factory: Any) -> Any:
     args = dict(arguments or {})
     try:
         client = client_factory()
         if name == "push_file":
             return _push_file(client, args)
+        if name == "save_url":
+            return _save_url(client, args)
         if name == "list_library":
             items = client.list_library(args.get("q"), args.get("kind"), args.get("limit", 100))
             return {"items": [_brief(i) for i in items]}

@@ -134,7 +134,10 @@ Response `200`: `{"items": [Item, ...]}`.
 Upload one file as `multipart/form-data`. Fields: `file` (required), `title`
 (default: the filename without its extension), `author` (default empty), `kind`
 (`book`, `article`, `transcript` or `newspaper`; default `article` for converted
-Markdown/HTML, `book` otherwise). Any other value is `422`.
+Markdown/HTML, `book` otherwise). Any other value is `422`. The optional
+`device` (a device id or a unique name) also queues the item for that reader in
+the same request; the response then has a `queued` queue entry. An unknown
+device is `404` and nothing is stored.
 
 ```bash
 curl -H "Authorization: Bearer <api-key>" \
@@ -166,6 +169,65 @@ Ingest errors have the shape `{"detail": "<message>", "code": "<code>"}`:
 | `converter_missing` | 503 | The host has no usable pandoc (the Docker image bundles it) |
 
 A blank `title` or an invalid `kind` returns `422` with a plain `detail`.
+
+### POST /api/library/url
+
+Save a web page by its address. The server fetches the page, keeps only the
+article and converts it to EPUB. JSON body: `url` (required), `title` (default:
+the page's own title), `author` (default: the page's author, when it names
+one), `kind` (default `article`) and `device` (a device id or a unique name:
+also queue the item for that reader).
+
+```bash
+curl -H "Authorization: Bearer <api-key>" -H "Content-Type: application/json" \
+     -d '{"url": "https://example.org/essay", "device": "my-reader"}' \
+     http://localhost:8780/api/library/url
+```
+
+What the address may point at:
+
+- An HTML page. Navigation, forms, scripts, images and link lists are dropped;
+  paragraphs, headings, lists, quotes, code and links are kept, and a `Source:`
+  line with the address is added at the end.
+- An EPUB (`.epub`, or `application/epub+zip`), stored as it is (`kind` then
+  defaults to `book`).
+- A Markdown file (`.md`, `.markdown`, or `text/markdown`), converted to EPUB.
+- Plain text (`text/plain`), stored as TXT.
+
+Response `201`: `{"item": Item, "created": true}`, plus `"queued": QueueEntry`
+when `device` was given. Saving the same page again returns `200` with
+`"created": false` and the existing item, as long as the page has not changed
+(the conversion is repeatable); with `device` it is queued again.
+
+The server makes the request, so what it may fetch is limited:
+
+- `http` and `https` only, and no credentials in the address.
+- The host must resolve to public addresses only. A loopback, private,
+  link-local or otherwise non-public address is refused, so the server cannot
+  be pointed at your LAN, at itself or at a cloud metadata address. This is
+  checked again on every redirect (at most 5).
+- A page may be 5 MiB at most, a linked EPUB 50 MiB, and the whole fetch has
+  20 seconds.
+- The request identifies itself as `xteink-capture`. A site that refuses
+  automated requests answers `403`, which is reported as `fetch_failed`. For
+  such a page, or one behind a login, send the page itself with
+  `POST /api/library` (see [`capture.md`](capture.md)).
+
+Errors have the same shape as upload errors. The upload codes above also apply
+to what was fetched. The codes of this route:
+
+| `code` | HTTP | Meaning |
+|--------|------|---------|
+| `bad_url` | 422 | Not an `http(s)` address, no host, or credentials in it |
+| `blocked_url` | 422 | The host resolves to an address that is not public |
+| `no_article` | 422 | The page has too little readable text (for example a page built by JavaScript) |
+| `too_large` | 413 | The page or file exceeds its size limit |
+| `unsupported_content` | 415 | Not HTML, EPUB, Markdown or plain text |
+| `fetch_failed` | 502 | The site could not be reached, or answered with an error status |
+| `fetch_timeout` | 504 | The site did not answer within 20 seconds |
+
+An unknown `device` is `404`, and a name shared by several devices is `422`;
+in both cases nothing is fetched.
 
 ### GET /api/library/{item_id}
 

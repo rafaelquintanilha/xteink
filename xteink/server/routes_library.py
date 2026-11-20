@@ -9,8 +9,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from xteink.core.errors import NotFoundError, ValidationError
 from xteink.core.ingest import (
     DEFAULT_LIMITS,
     IngestEnvironmentError,
@@ -19,6 +20,7 @@ from xteink.core.ingest import (
 )
 
 from .auth import Services, get_services, require_operator
+from .capture import capture_and_add
 
 router = APIRouter(
     prefix="/api/library", tags=["library"], dependencies=[Depends(require_operator)]
@@ -30,6 +32,9 @@ _STATUS_BY_CODE = {
     "too_large": 413,
     "unsupported_format": 415,
     "pdf_not_supported": 415,
+    "unsupported_content": 415,
+    "fetch_failed": 502,
+    "fetch_timeout": 504,
 }
 _MEDIA_TYPES = {
     "epub": "application/epub+zip",
@@ -44,6 +49,30 @@ Kind = Literal["book", "article", "transcript", "newspaper"]
 
 class KindPatch(BaseModel):
     kind: Kind
+
+
+class UrlSave(BaseModel):
+    """Save the page at ``url``; ``device`` (an id or a name) also queues it for that reader."""
+
+    url: str = Field(..., min_length=1, max_length=2000)
+    title: str | None = Field(None, max_length=500)
+    author: str = Field("", max_length=500)
+    kind: Kind | None = None
+    device: int | str | None = None
+
+
+def _device_id(services: Services, ref: int | str) -> int:
+    devices = services.devices.list()
+    text = str(ref).strip()
+    for d in devices:
+        if str(d.id) == text:
+            return d.id
+    named = [d for d in devices if d.name == text]
+    if len(named) == 1:
+        return named[0].id
+    if not named:
+        raise NotFoundError(f"no device with id or name {text!r}")
+    raise ValidationError(f"several devices are named {text!r}; use the id")
 
 
 def _ingest_error_response(exc: IngestError) -> JSONResponse:
@@ -77,9 +106,15 @@ async def upload_item(
     title: str | None = Form(None),
     author: str = Form(""),
     kind: Kind | None = Form(None),
+    device: str | None = Form(None, description="device id or name: also queue the item for it"),
     services: Services = Depends(get_services),
 ):
-    """Upload a book/article (EPUB, BMP, TXT, or Markdown/HTML converted to EPUB)."""
+    """Upload a book/article (EPUB, BMP, TXT, or Markdown/HTML converted to EPUB).
+
+    With ``device`` the item is also queued for that reader, in the same request.
+    """
+    # Resolve the reader first: an unknown one must not leave a stray item behind.
+    device_id = _device_id(services, device) if device and device.strip() else None
     # Read at most one byte past the cap so oversize uploads fail without buffering it all.
     data = await file.read(UPLOAD_LIMITS.max_bytes + 1)
     try:
@@ -98,7 +133,40 @@ async def upload_item(
         return _ingest_error_response(exc)
     if not result.created:
         response.status_code = 200
-    return {"item": asdict(result.item), "created": result.created}
+    out: dict = {"item": asdict(result.item), "created": result.created}
+    if device_id is not None:
+        out["queued"] = asdict(services.devices.queue_item(device_id, result.item.id))
+    return out
+
+
+@router.post("/url", status_code=201, responses={200: {"description": "already in the library"}})
+async def save_url(body: UrlSave, response: Response, services: Services = Depends(get_services)):
+    """Fetch a web page (or a linked EPUB, Markdown or text file) and add it to the library.
+
+    An HTML page is reduced to its article and converted to EPUB. The server only fetches
+    public http(s) addresses. With ``device`` the item is also queued for that reader.
+    """
+    # Resolve the reader first: an unknown one must not leave a stray item behind.
+    device_id = _device_id(services, body.device) if body.device is not None else None
+    try:
+        # The fetch and the pandoc conversion block: keep them off the event loop.
+        result = await run_in_threadpool(
+            capture_and_add,
+            services.library,
+            body.url,
+            title=body.title,
+            author=body.author,
+            kind=body.kind,
+            limits=UPLOAD_LIMITS,
+        )
+    except IngestError as exc:
+        return _ingest_error_response(exc)
+    if not result.created:
+        response.status_code = 200
+    out: dict = {"item": asdict(result.item), "created": result.created}
+    if device_id is not None:
+        out["queued"] = asdict(services.devices.queue_item(device_id, result.item.id))
+    return out
 
 
 @router.get("/{item_id}")

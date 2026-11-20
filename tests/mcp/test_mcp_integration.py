@@ -32,12 +32,12 @@ def text(res):
     return res.content[0].text
 
 
-def test_lists_three_tools(api_url, api_key):
+def test_lists_four_tools(api_url, api_key):
     async def fn(s):
         return {t.name for t in (await s.list_tools()).tools}
 
     names = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
-    assert names == {"push_file", "list_library", "send_to_device"}
+    assert names == {"push_file", "save_url", "list_library", "send_to_device"}
 
 
 def test_push_markdown_list_and_queue(api_url, api_key, store, device):
@@ -72,6 +72,51 @@ def test_push_with_device_queues_in_one_call(api_url, api_key, store, device):
     res = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
     out = json.loads(text(res))
     assert out["queued"]["item_id"] == out["item"]["id"]
+
+
+PAGE = (
+    "<html><head><title>From The Web</title></head><body><article><p>"
+    + "A sentence of ordinary prose that is long enough to count as article text. " * 4
+    + "</p></article></body></html>"
+)
+
+
+def test_save_url_fetches_converts_and_queues(api_url, api_key, store, device, monkeypatch):
+    from xteink.server import capture
+
+    def fake_fetch(url, **kw):
+        return capture.Fetched(url=url, data=PAGE.encode(), content_type="text/html", charset="")
+
+    # The API runs in this process (a thread), so its fetch can be replaced here.
+    monkeypatch.setattr(capture, "fetch", fake_fetch)
+
+    async def fn(s):
+        return await s.call_tool("save_url", {"url": "https://example.org/a", "device": "reader"})
+
+    res = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
+    assert not res.isError, text(res)
+    out = json.loads(text(res))
+    assert (out["item"]["title"], out["item"]["kind"], out["created"]) == (
+        "From The Web",
+        "article",
+        True,
+    )
+    assert out["queued"]["item_id"] == out["item"]["id"]
+    assert [e.item_id for e in DeviceService(store).queue(device.id)] == [out["item"]["id"]]
+
+
+def test_save_url_refusals_are_tool_errors_with_the_code(api_url, api_key):
+    async def fn(s):
+        lan = await s.call_tool("save_url", {"url": "http://127.0.0.1:1/admin"})
+        device = await s.call_tool("save_url", {"url": "https://example.org/a", "device": "nope"})
+        empty = await s.call_tool("save_url", {"url": " "})
+        return lan, device, empty
+
+    lan, device, empty = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
+    assert lan.isError and "blocked_url" in text(lan) and "422" in text(lan)
+    assert device.isError and "404" in text(device)
+    assert empty.isError and "url is required" in text(empty)
+    assert "Traceback" not in text(lan) + text(device) + text(empty)
 
 
 def test_push_path(api_url, api_key, tmp_path):

@@ -192,6 +192,27 @@ class Client:
         body, ctype = _multipart(fields, filename, data)  # type: ignore[arg-type]
         return self._request("POST", "/api/library", raw_body=body, content_type=ctype)
 
+    def save_url(
+        self,
+        url: str,
+        title: str | None = None,
+        author: str = "",
+        kind: str | None = None,
+        device: int | str | None = None,
+    ) -> dict:
+        """Have the server fetch ``url`` and add it (``POST /api/library/url``).
+
+        Returns ``{item, created}``, plus ``queued`` when ``device`` (an id or a name) is given.
+        """
+        body: dict[str, Any] = {"url": url, "author": author}
+        if title is not None:
+            body["title"] = title
+        if kind is not None:
+            body["kind"] = kind
+        if device is not None:
+            body["device"] = device
+        return self._request("POST", "/api/library/url", json_body=body)
+
     def set_kind(self, item_id: int, kind: str) -> dict:
         """Change an item's kind (``PATCH /api/library/{id}``); returns the updated item."""
         return self._request("PATCH", f"/api/library/{int(item_id)}", json_body={"kind": kind})

@@ -60,6 +60,18 @@
             "title": "Author",
             "type": "string"
           },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "device id or name: also queue the item for it",
+            "title": "Device"
+          },
           "file": {
             "contentMediaType": "application/octet-stream",
             "title": "File",
@@ -219,6 +231,71 @@
           "item_id"
         ],
         "title": "QueueRequest",
+        "type": "object"
+      },
+      "UrlSave": {
+        "description": "Save the page at ``url``; ``device`` (an id or a name) also queues it for that reader.",
+        "properties": {
+          "author": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Author",
+            "type": "string"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "book",
+                  "article",
+                  "transcript",
+                  "newspaper"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "UrlSave",
         "type": "object"
       },
       "ValidationError": {
@@ -1132,7 +1209,7 @@
         ]
       },
       "post": {
-        "description": "Upload a book/article (EPUB, BMP, TXT, or Markdown/HTML converted to EPUB).",
+        "description": "Upload a book/article (EPUB, BMP, TXT, or Markdown/HTML converted to EPUB).\n\nWith ``device`` the item is also queued for that reader, in the same request.",
         "operationId": "upload_item_api_library_post",
         "requestBody": {
           "content": {
@@ -1173,6 +1250,54 @@
           }
         ],
         "summary": "Upload Item",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/library/url": {
+      "post": {
+        "description": "Fetch a web page (or a linked EPUB, Markdown or text file) and add it to the library.\n\nAn HTML page is reduced to its article and converted to EPUB. The server only fetches\npublic http(s) addresses. With ``device`` the item is also queued for that reader.",
+        "operationId": "save_url_api_library_url_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UrlSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "already in the library"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Save Url",
         "tags": [
           "library"
         ]
