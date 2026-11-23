@@ -53,3 +53,19 @@ def test_the_cache_stores_digests_not_keys():
     check = KeyCheck(Verifier())
     check("xtk_secret_value")
     assert all("xtk_secret_value" not in k for k in check._accepted)
+
+
+def test_refusal_reasons_never_contain_the_key(caplog):
+    import logging
+
+    from xteink.mcp.server import _log_refusal
+
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    _log_refusal({}, "")
+    _log_refusal({"authorization": "Token abc_secret"}, "")
+    _log_refusal({"authorization": "Bearer sk_secret_value"}, "sk_secret_value")
+    text = caplog.text
+    assert "no Authorization header" in text
+    assert "'Token'" in text
+    assert "does not start with xtk_" in text
+    assert "secret" not in text

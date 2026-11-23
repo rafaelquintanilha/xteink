@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from collections.abc import Callable
@@ -104,6 +105,25 @@ class KeyCheck:
 
 def _csv(value: str | None) -> list[str]:
     return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+
+# uvicorn configures this logger, so refusals land in the server log beside the access line.
+_LOG = logging.getLogger("uvicorn.error")
+
+
+def _log_refusal(headers: dict[str, str], key: str) -> None:
+    """Why a request had no usable key, for whoever sets up a client. Never logs the key."""
+    auth = headers.get("authorization")
+    if auth is None:
+        reason = "no Authorization header"
+    elif not auth.strip():
+        reason = "an empty Authorization header"
+    elif not key:
+        scheme = auth.strip().split(" ", 1)[0][:20]
+        reason = f"Authorization scheme {scheme!r}, expected 'Bearer'"
+    else:
+        reason = f"a Bearer token of {len(key)} characters that does not start with xtk_"
+    _LOG.info("refused: %s", reason)
 
 
 def build_server(client_factory: Callable[[], Any] | None = None, *, http_auth: bool = False):
@@ -207,6 +227,7 @@ def build_http_app(env: dict[str, str] | None = None, key_check: KeyCheck | None
             }
             key = _bearer(headers)
             if not key.startswith("xtk_"):
+                _log_refusal(headers, key)
                 response = refuse(
                     401,
                     "send Authorization: Bearer xtk_... (an xteink API key)",
@@ -218,6 +239,7 @@ def build_http_app(env: dict[str, str] | None = None, key_check: KeyCheck | None
                     await manager.handle_request(scope, receive, send)
                     return
                 if verdict == "invalid":
+                    _LOG.info("refused: the API does not accept this xtk_ key")
                     response = refuse(
                         401,
                         "the API key is unknown or revoked",
