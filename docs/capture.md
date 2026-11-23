@@ -35,16 +35,24 @@ shortcut below does that.
 
 ## The phone must reach the main app
 
-Both shortcuts call the main app (port 8780), not the device app. At home that
-is the server's LAN address. Away from home it is whatever private route you
-use to the server, for example a tailnet. The device tunnel does not help here:
-it exposes only `/api/device/*`. See [`remote-access.md`](remote-access.md).
+Both shortcuts call the main app (port 8780), not the device app. Below,
+`<main-app>` is the address the phone uses for it:
+
+| Setup | `<main-app>` |
+|-------|--------------|
+| A VPS behind Caddy ([`vps-deploy.md`](vps-deploy.md)) | `https://<host>`. Caddy routes `/api/*` to the main app, so the phone reaches it from anywhere |
+| A server at home | `http://<server>:8780` on the LAN; away from home, a private route such as a tailnet |
+
+With the Cloudflare Tunnel setup the device tunnel does not help: it exposes
+only `/api/device/*`. See [`remote-access.md`](remote-access.md).
 
 Mint a key for the phone alone, so it can be revoked without touching anything
-else:
+else. It is printed once; paste it into the shortcut and nowhere else.
 
 ```bash
 python -m xteink.server create-key iphone
+# On the VPS, in /opt/apps/apps/xteink:
+docker compose exec api python -m xteink.server create-key iphone
 ```
 
 ## Shortcut 1: send a link
@@ -56,7 +64,7 @@ Shortcuts action list and have not been run on a phone from this repository.
    turn on **Show in Share Sheet** and accept **URLs** and **Safari web pages**.
 2. Add **Get URLs from Input**, taking the **Shortcut Input**.
 3. Add **Get Contents of URL**:
-   - URL: `http://<server>:8780/api/library/url`
+   - URL: `<main-app>/api/library/url`
    - Method: `POST`
    - Headers: `Authorization` = `Bearer <api-key>`
    - Request Body: `JSON`, with two text fields: `url` = the **URLs** from
@@ -80,7 +88,7 @@ fetch anything: the article is uploaded as a file.
 4. Add **Make HTML from Rich Text**, taking that body.
 5. Add **Set Name**: name the HTML `article.html`.
 6. Add **Get Contents of URL**:
-   - URL: `http://<server>:8780/api/library`
+   - URL: `<main-app>/api/library`
    - Method: `POST`
    - Headers: `Authorization` = `Bearer <api-key>`
    - Request Body: `Form`, with `file` (File) = the renamed HTML, and three
@@ -91,6 +99,6 @@ fetch anything: the article is uploaded as a file.
 ## When it reaches the reader
 
 The item waits in the reader's queue until the reader syncs. On the X4 build of
-the firmware that is on a power-button wake (at most one network attempt per 15
-minutes), on the daily run, and on **Sync books now**. Articles land in
-`/Articles` and books in `/Books`.
+the firmware that is on a power-button wake that opens Home (a wake that resumes
+a book stays offline), on the daily run, and on **Sync books now** on Home.
+Articles land in `/Articles` and books in `/Books`, named `Title - Author`.

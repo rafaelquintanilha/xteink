@@ -32,6 +32,8 @@ web UI and `/docs` are not exposed.
   # Let's Encrypt's. Keep Caddy from falling back to another issuer.
   tls {
     issuer acme
+    # RSA: the reader verifies an RSA chain several times faster than ECDSA P-384.
+    key_type rsa2048
   }
 
   # The reader: device protocol only, every route needs a device key.
@@ -82,6 +84,24 @@ repository), among them ISRG Root X1 and X2. Caddy's Let's Encrypt
 certificates chain to those, and Caddy sends the cross-signed intermediate the
 reader needs. The `tls` block above keeps Caddy on Let's Encrypt: with
 another issuer the reader would stop syncing.
+
+`key_type rsa2048` makes the chain RSA end to end (leaf ← YR1/YR2 ← Root YR
+← ISRG Root X1). Caddy's default ECDSA chain (leaf ← YE1 ← Root YE ← ISRG
+Root X2, cross-signed by X1) needs three P-384 signature checks, which the
+ESP32-C3 does in software; RSA checks with a small public exponent are cheap.
+Measured with the firmware's wolfSSL build on a Mac
+(`scripts/xteink-tls/host_check.cpp` in the firmware repository): 11.5 ms of
+CPU per verified handshake with the ECDSA chain, 2.9 ms with the RSA chain,
+and a handshake heap peak of 39.7 KB and 41.1 KB. The reader opens three
+connections per delivery, so the saving repeats three times.
+
+Caddy keeps a loaded certificate in memory across reloads, so changing
+`key_type` does not replace a certificate that is still valid. To get the new
+key type now, move the stored certificate out of
+`/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<host>/`,
+reload once with the site removed, then reload with it back. Only `<host>`
+is down in between; a container restart would interrupt every site on the
+host.
 
 ## Keys
 
