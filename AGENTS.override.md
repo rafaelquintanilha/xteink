@@ -25,7 +25,7 @@ with a file/book service, optional remote access via Cloudflare Tunnel, and
 custom device firmware that joins Wi-Fi to sync books locally, so reading works
 fully offline. Your library never leaves hardware you own. **Landed:** the local
 server (main app :8780 with web UI + API, device-only app :8781, both key-gated),
-an MCP server (`push_file`, `save_url`, `list_library`, `send_to_device`; stdio or :8782),
+an MCP server (`push_file`, `save_url`, `list_library`, `list_devices`, `send_to_device`; stdio or :8782),
 Docker/compose packaging, an opt-in two-tunnel Cloudflare setup, and CLI nouns
 `server`, `library`, `device`, `firmware`, `tunnel`, `mcp`. The device
 firmware (separate repo, `agentculture/xteink-firmware`) is hardware-verified on

@@ -177,6 +177,19 @@ List or search items. Arguments: `q` (searches title and author), `kind`
 
 Result: `{"items": [{"id": 7, "title": "...", ...}]}`.
 
+### list_devices
+
+The readers that can receive items, so an agent can find the name `device`
+takes without being told. No arguments. Revoked readers are left out.
+
+```json
+{"name": "list_devices", "arguments": {}}
+```
+
+Result: `{"devices": [{"id": 1, "name": "x4", "last_seen": "...",
+"last_sync_result": "ok", "firmware_version": "..."}]}`. Keys and run details
+are not included.
+
 ### send_to_device
 
 Queue an existing item so the device downloads it on its next sync. Both

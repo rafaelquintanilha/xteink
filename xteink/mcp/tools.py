@@ -12,7 +12,7 @@ __all__ = ["ToolError", "call_tool", "tool_specs"]
 _KIND = {"type": "string", "enum": ["book", "article", "transcript", "newspaper"]}
 _DEVICE = {
     "type": ["string", "integer"],
-    "description": "device id or name (see list_devices via the API)",
+    "description": "reader name or id; list_devices names them",
 }
 
 _SPECS: list[dict[str, Any]] = [
@@ -73,6 +73,14 @@ _SPECS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "list_devices",
+        "description": (
+            "List the e-ink readers that can receive items: their `name` is what `device` takes "
+            "in save_url, push_file and send_to_device. Revoked readers are left out."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "send_to_device",
         "description": "Queue a library item for a device so it downloads on its next sync.",
         "inputSchema": {
@@ -105,6 +113,14 @@ def _resolve_device(client: Client, device: str | int) -> int:
     if not named:
         raise ToolError(f"unknown_device: no device with id or name {ref!r}")
     raise ToolError(f"ambiguous_device: several devices are named {ref!r}; use the id")
+
+
+_DEVICE_FIELDS = ("id", "name", "last_seen", "last_sync_result", "firmware_version")
+
+
+def _device_brief(device: dict) -> dict:
+    """What an agent needs to pick a reader; key ids and run details stay out."""
+    return {k: device.get(k) for k in _DEVICE_FIELDS}
 
 
 def _brief(item: dict) -> dict:
@@ -171,6 +187,12 @@ def call_tool(name: str, arguments: dict[str, Any] | None, client_factory: Any) 
         if name == "list_library":
             items = client.list_library(args.get("q"), args.get("kind"), args.get("limit", 100))
             return {"items": [_brief(i) for i in items]}
+        if name == "list_devices":
+            return {
+                "devices": [
+                    _device_brief(d) for d in client.list_devices() if not d.get("revoked_at")
+                ]
+            }
         if name == "send_to_device":
             device_id = _resolve_device(client, args["device"])
             return client.queue_item(device_id, args["item_id"])

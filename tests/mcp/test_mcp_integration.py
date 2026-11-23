@@ -32,12 +32,26 @@ def text(res):
     return res.content[0].text
 
 
-def test_lists_four_tools(api_url, api_key):
+def test_lists_five_tools(api_url, api_key):
     async def fn(s):
         return {t.name for t in (await s.list_tools()).tools}
 
     names = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
-    assert names == {"push_file", "save_url", "list_library", "send_to_device"}
+    assert names == {"push_file", "save_url", "list_library", "list_devices", "send_to_device"}
+
+
+def test_list_devices_names_live_readers_without_keys(api_url, api_key, store, device):
+    revoked = DeviceService(store).register("old-reader")[0]
+    DeviceService(store).revoke_key(revoked.id)
+
+    async def fn(s):
+        return await s.call_tool("list_devices", {})
+
+    res = run_session({"XTEINK_URL": api_url, "XTEINK_API_KEY": api_key}, fn)
+    assert not res.isError
+    devices = json.loads(text(res))["devices"]
+    assert [d["name"] for d in devices] == [device.name]
+    assert set(devices[0]) == {"id", "name", "last_seen", "last_sync_result", "firmware_version"}
 
 
 def test_push_markdown_list_and_queue(api_url, api_key, store, device):

@@ -50,7 +50,7 @@ Landed and in the tree (read the code, not this list, when in doubt):
   Both apps require keys, including on the LAN; the main app also accepts a
   verified Cloudflare Access JWT when `XTEINK_ACCESS_TEAM_DOMAIN` and
   `XTEINK_ACCESS_AUD` are set (`xteink/server/access.py`, cited from culture-rules).
-- **MCP** (`xteink/mcp`, official `mcp` SDK): tools `push_file`, `save_url`,
+- **MCP** (`xteink/mcp`, official `mcp` SDK): tools `push_file`, `save_url`, `list_devices`,
   `list_library`, `send_to_device`; stdio by default (key from `XTEINK_API_KEY`), `--http` on
   :8782 at `/mcp` where every caller sends its own `Authorization: Bearer xtk_...`,
   checked with the API before the session (401 without one or for a refused key;
