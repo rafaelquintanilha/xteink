@@ -19,6 +19,8 @@ The server needs the `server` extra (`pip install 'xteink[server]'`, or
 | `XTEINK_MCP_BIND` | `0.0.0.0` | Bind address for `--http` |
 | `XTEINK_MCP_PORT` | `8782` | Port for `--http` |
 | `XTEINK_MCP_TRANSPORT` | `stdio` | Set to `http` to act like `--http` |
+| `XTEINK_MCP_ALLOWED_HOSTS` | none | Comma-separated `Host` values `--http` accepts (`host`, or `host:*` for any port). Set, it turns on the SDK's DNS-rebinding protection: another `Host` gets 421 |
+| `XTEINK_MCP_ALLOWED_ORIGINS` | none | Comma-separated `Origin` values accepted with the above (a request without `Origin`, as from a server-side agent, passes); another gets 403 |
 
 Mint a dedicated key for it so you can revoke it independently:
 
@@ -44,21 +46,34 @@ python -m xteink.mcp --http --bind 0.0.0.0 --port 8782
 ```
 
 In the compose stack this is the `mcp` service, published on host port 8782
-(`XTEINK_PUBLISH_MCP_PORT`). The endpoint is `http://<host>:8782/mcp/`; `/mcp`
-answers with a 307 redirect to it.
+(`XTEINK_PUBLISH_MCP_PORT`). The endpoint is `http://<host>:8782/mcp`; `/mcp/`
+answers the same (no redirect: behind a TLS proxy one would point at `http://`).
 
-Every request must carry `Authorization: Bearer xtk_...`, an xteink API key.
-Without one the server answers 401 before any MCP session starts. Each tool call
-uses the caller's key against the API, so a wrong or revoked key is refused there.
-The HTTP server holds no key of its own. Over HTTP, `push_file` refuses `path`
-(a file on the MCP host); send `content` or `content_base64` instead. Keep it on
-a LAN, a tailnet or the mesh.
+Every request must carry `Authorization: Bearer xtk_...`, an xteink API key, and
+the key is checked with the API (`GET /api/whoami`) before the request reaches an
+MCP session:
 
-### Scope: not over the internet
+| Request | Answer |
+|---------|--------|
+| No key, or not a `Bearer xtk_...` one | 401, `WWW-Authenticate: Bearer realm="xteink"` |
+| A key the API refuses (unknown, revoked, a device key) | 401, `WWW-Authenticate: Bearer realm="xteink", error="invalid_token"` (RFC 6750) |
+| The API cannot be reached | 503 |
 
-Remote MCP over the internet is out of scope. The compose `remote` profile
-tunnels only the web UI (behind Cloudflare Access) and the device app. It never
-exposes the MCP port. Reach MCP from elsewhere over Tailscale or the mesh.
+A key the API accepted is trusted for 60 s (by its sha256) so a session's many
+requests cost one check; a refused key is never remembered. Each tool call still
+uses the caller's key against the API, which decides. The HTTP server holds no key
+of its own. Over HTTP, `push_file` refuses `path` (a file on the MCP host); send
+`content` or `content_base64` instead.
+
+### Over the internet
+
+The compose `remote` profile never tunnels the MCP port. A cloud agent (an agent
+running on someone else's computer, such as Grok Bot) cannot reach a LAN, so on a
+VPS the MCP server can sit behind the same reverse proxy as the API, at
+`https://<host>/mcp` ([`vps-deploy.md`](vps-deploy.md#mcp-for-cloud-agents)). That
+exposes nothing new: every tool is an API call made with the caller's key, the same
+call `https://<host>/api/*` already accepts. Give each agent its own key so it can be
+revoked alone, and set `XTEINK_MCP_ALLOWED_HOSTS` to the public host name.
 
 ## Client configuration
 

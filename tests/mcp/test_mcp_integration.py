@@ -168,8 +168,7 @@ def test_missing_key_refuses_to_start(api_url):
     assert "XTEINK_API_KEY" in r.stderr
 
 
-@pytest.fixture
-def http_mcp(api_url):
+def _start_http_mcp(api_url, extra_env=None):
     """A streamable-http MCP server with NO server-side key: callers bring their own."""
     import socket
     import time
@@ -180,21 +179,77 @@ def http_mcp(api_url):
     env = {k: v for k, v in os.environ.items() if k != "XTEINK_API_KEY"}
     proc = subprocess.Popen(
         [sys.executable, "-m", "xteink.mcp", "--http", "--bind", "127.0.0.1", "--port", str(port)],
-        env={**env, "XTEINK_URL": api_url},
+        env={**env, "XTEINK_URL": api_url, **(extra_env or {})},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    for _ in range(100):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+            break
+        except OSError:
+            time.sleep(0.1)
+    return proc, f"http://127.0.0.1:{port}/mcp"
+
+
+@pytest.fixture
+def http_mcp(api_url):
+    proc, url = _start_http_mcp(api_url)
     try:
-        for _ in range(100):
-            try:
-                socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
-                break
-            except OSError:
-                time.sleep(0.1)
-        yield f"http://127.0.0.1:{port}/mcp"
+        yield url
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+@pytest.fixture
+def http_mcp_hosts(api_url):
+    """Like http_mcp, with Host/Origin validation on (DNS rebinding protection)."""
+    proc, url = _start_http_mcp(
+        api_url,
+        {
+            "XTEINK_MCP_ALLOWED_HOSTS": "127.0.0.1:*",
+            "XTEINK_MCP_ALLOWED_ORIGINS": "https://reader.example",
+        },
+    )
+    try:
+        yield url
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+def _raw_initialize(url, key=None, extra_headers=None):
+    """POST an MCP initialize; (status, headers, body). No redirects are followed."""
+    import http.client
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "0"},
+            },
+        }
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        **({"Authorization": f"Bearer {key}"} if key else {}),
+        **(extra_headers or {}),
+    }
+    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)
+    try:
+        conn.request("POST", parts.path, body=body, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, dict(resp.getheaders()), resp.read()
+    finally:
+        conn.close()
 
 
 def _http_call(url, key, tool, args):
@@ -237,10 +292,34 @@ def test_streamable_http_without_a_key_is_401(http_mcp):
     assert e.value.code == 401
 
 
-def test_streamable_http_wrong_key_is_refused_by_the_api(http_mcp):
-    res = _http_call(http_mcp, "xtk_wrong_wrong_wrong", "list_library", {})
-    assert res.isError
-    assert "invalid_key" in text(res) or "401" in text(res)
+def test_streamable_http_wrong_key_is_401_before_the_session(http_mcp):
+    status, headers, _ = _raw_initialize(http_mcp, "xtk_wrong_wrong_wrong")
+    assert status == 401
+    assert 'error="invalid_token"' in headers.get("www-authenticate", "")
+
+
+def test_streamable_http_missing_key_names_the_scheme(http_mcp):
+    status, headers, _ = _raw_initialize(http_mcp)
+    assert status == 401
+    assert headers.get("www-authenticate", "").startswith("Bearer")
+
+
+def test_streamable_http_answers_at_mcp_without_a_redirect(http_mcp, api_key):
+    # Behind a TLS proxy a /mcp -> /mcp/ redirect would point at http://.
+    assert http_mcp.endswith("/mcp")
+    status, _, _ = _raw_initialize(http_mcp, api_key)
+    assert status == 200
+
+
+def test_streamable_http_host_validation(http_mcp_hosts, api_key):
+    assert _raw_initialize(http_mcp_hosts, api_key)[0] == 200
+    assert _raw_initialize(http_mcp_hosts, api_key, {"Host": "evil.example"})[0] == 421
+    bad_origin = {"Origin": "https://evil.example"}
+    assert _raw_initialize(http_mcp_hosts, api_key, bad_origin)[0] == 403
+    good_origin = {"Origin": "https://reader.example"}
+    assert _raw_initialize(http_mcp_hosts, api_key, good_origin)[0] == 200
+    res = _http_call(http_mcp_hosts, api_key, "list_library", {})
+    assert not res.isError
 
 
 def test_streamable_http_refuses_host_paths(http_mcp, api_key, tmp_path):

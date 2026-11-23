@@ -4,18 +4,26 @@ Transports:
 
 * stdio: the server talks to the HTTP API with the key from ``XTEINK_API_KEY`` (a local,
   single-user process).
-* streamable-http: every request must carry ``Authorization: Bearer xtk_...``; requests
-  without one get 401 before reaching the MCP session, and each tool call uses the caller's
-  key against the API, which decides. The HTTP server holds no key of its own, and
-  ``push_file``'s ``path`` (a file on the MCP host) is refused over HTTP.
+* streamable-http, served at ``/mcp``: every request must carry
+  ``Authorization: Bearer xtk_...``, and the key is checked against the API
+  (``GET /api/whoami``) before the request reaches an MCP session. A missing or refused key
+  gets 401 with ``WWW-Authenticate: Bearer`` (RFC 6750), an unreachable API 503. A key the
+  API accepted is trusted for :data:`KEY_CHECK_TTL_S` without asking again; each tool call
+  still uses the caller's key against the API, which decides. The HTTP server holds no key
+  of its own, and ``push_file``'s ``path`` (a file on the MCP host) is refused over HTTP.
+  ``XTEINK_MCP_ALLOWED_HOSTS`` / ``XTEINK_MCP_ALLOWED_ORIGINS`` (comma-separated) turn on
+  the SDK's Host/Origin validation against DNS rebinding.
 
-Issue 1 scope is LAN/tailnet/mesh only; this is never routed through the tunnel.
+Never routed through the Cloudflare tunnel. On a VPS it can sit behind the same reverse
+proxy as the API (docs/vps-deploy.md): it exposes nothing the API does not.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -49,6 +57,53 @@ def _bearer(headers: Any) -> str:
     auth = headers.get("authorization") or ""
     scheme, _, key = auth.partition(" ")
     return key.strip() if scheme.lower() == "bearer" else ""
+
+
+KEY_CHECK_TTL_S = 60.0
+_KEY_CACHE_MAX = 256
+
+
+class KeyCheck:
+    """Checks a bearer key with the API before an HTTP request reaches the MCP session.
+
+    Accepted keys are remembered (by sha256, never the key itself) for ``ttl`` seconds, so
+    a session's many requests cost one API call. Refused keys are not remembered: a key
+    created a moment later works at once.
+    """
+
+    def __init__(
+        self,
+        verify: Callable[[str], None],
+        *,
+        ttl: float = KEY_CHECK_TTL_S,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._verify = verify
+        self._ttl = ttl
+        self._now = now
+        self._accepted: dict[str, float] = {}
+
+    def __call__(self, key: str) -> str:
+        """``"ok"``, ``"invalid"`` (the API refused the key) or ``"unavailable"``."""
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        now = self._now()
+        if self._accepted.get(digest, 0.0) > now:
+            return "ok"
+        try:
+            self._verify(key)
+        except api_client.ApiError as exc:
+            # Any 4xx is the key's fault (401 unknown or revoked, 403 a device key).
+            return "invalid" if 400 <= exc.status < 500 else "unavailable"
+        if len(self._accepted) >= _KEY_CACHE_MAX:
+            self._accepted = {d: t for d, t in self._accepted.items() if t > now}
+            if len(self._accepted) >= _KEY_CACHE_MAX:
+                self._accepted.clear()
+        self._accepted[digest] = now + self._ttl
+        return "ok"
+
+
+def _csv(value: str | None) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
 
 
 def build_server(client_factory: Callable[[], Any] | None = None, *, http_auth: bool = False):
@@ -105,38 +160,89 @@ def run_stdio() -> None:
     anyio.run(main)
 
 
-def run_http(bind: str, port: int) -> None:
+def build_http_app(env: dict[str, str] | None = None, key_check: KeyCheck | None = None):
+    """The streamable-http ASGI app: ``/mcp`` (and ``/mcp/``), key-checked."""
     try:
-        import uvicorn  # noqa: PLC0415
+        import anyio  # noqa: PLC0415
         from mcp.server.streamable_http_manager import (  # noqa: PLC0415
             StreamableHTTPSessionManager,
         )
+        from mcp.server.transport_security import TransportSecuritySettings  # noqa: PLC0415
         from starlette.applications import Starlette  # noqa: PLC0415
-        from starlette.routing import Mount  # noqa: PLC0415
+        from starlette.routing import Mount, Route  # noqa: PLC0415
     except ImportError as exc:
         raise ServerExtraMissing(_EXTRA_MESSAGE) from exc
     import contextlib  # noqa: PLC0415
 
     from starlette.responses import JSONResponse  # noqa: PLC0415
 
-    manager = StreamableHTTPSessionManager(app=build_server(http_auth=True))
+    env = _env() if env is None else env
+    base_url = api_client.from_env({**env, api_client.KEY_ENV: "unused"}).base_url
+    if key_check is None:
+        key_check = KeyCheck(lambda key: api_client.Client(base_url, key).whoami())
+    hosts, origins = _csv(env.get("XTEINK_MCP_ALLOWED_HOSTS")), _csv(
+        env.get("XTEINK_MCP_ALLOWED_ORIGINS")
+    )
+    security = (
+        TransportSecuritySettings(
+            enable_dns_rebinding_protection=True, allowed_hosts=hosts, allowed_origins=origins
+        )
+        if hosts
+        else None
+    )
+    manager = StreamableHTTPSessionManager(
+        app=build_server(http_auth=True), security_settings=security
+    )
 
-    async def guarded(scope, receive, send) -> None:
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
-        if not _bearer(headers).startswith("xtk_"):
-            response = JSONResponse(
-                {"detail": "send Authorization: Bearer xtk_... (an xteink API key)"},
-                status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    def refuse(status: int, detail: str, challenge: str | None) -> Any:
+        headers = {"WWW-Authenticate": challenge} if challenge else None
+        return JSONResponse({"detail": detail}, status_code=status, headers=headers)
+
+    class Guard:
+        """ASGI app: the key is checked here, before the MCP session sees the request."""
+
+        async def __call__(self, scope, receive, send) -> None:
+            headers = {
+                k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]
+            }
+            key = _bearer(headers)
+            if not key.startswith("xtk_"):
+                response = refuse(
+                    401,
+                    "send Authorization: Bearer xtk_... (an xteink API key)",
+                    'Bearer realm="xteink"',
+                )
+            else:
+                verdict = await anyio.to_thread.run_sync(key_check, key)
+                if verdict == "ok":
+                    await manager.handle_request(scope, receive, send)
+                    return
+                if verdict == "invalid":
+                    response = refuse(
+                        401,
+                        "the API key is unknown or revoked",
+                        'Bearer realm="xteink", error="invalid_token"',
+                    )
+                else:
+                    response = refuse(503, "the xteink API is not reachable", None)
             await response(scope, receive, send)
-            return
-        await manager.handle_request(scope, receive, send)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
         async with manager.run():
             yield
 
-    app = Starlette(routes=[Mount("/mcp", app=guarded)], lifespan=lifespan)
-    uvicorn.run(app, host=bind, port=port, log_level="info")
+    guard = Guard()
+    # Both spellings answer directly: a /mcp -> /mcp/ redirect behind a TLS-terminating proxy
+    # would point at http://, and clients must not follow it with their key.
+    return Starlette(
+        routes=[Route("/mcp", endpoint=guard), Mount("/mcp", app=guard)], lifespan=lifespan
+    )
+
+
+def run_http(bind: str, port: int) -> None:
+    try:
+        import uvicorn  # noqa: PLC0415
+    except ImportError as exc:
+        raise ServerExtraMissing(_EXTRA_MESSAGE) from exc
+    uvicorn.run(build_http_app(), host=bind, port=port, log_level="info")

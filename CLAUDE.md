@@ -52,9 +52,11 @@ Landed and in the tree (read the code, not this list, when in doubt):
   `XTEINK_ACCESS_AUD` are set (`xteink/server/access.py`, cited from culture-rules).
 - **MCP** (`xteink/mcp`, official `mcp` SDK): tools `push_file`, `save_url`,
   `list_library`, `send_to_device`; stdio by default (key from `XTEINK_API_KEY`), `--http` on
-  :8782 where every caller sends its own `Authorization: Bearer xtk_...` (401
-  without one; no server-side key; `path` refused). LAN/tailnet/mesh only, never
-  tunnelled. `xteink/client.py` is the stdlib API client behind the CLI and MCP.
+  :8782 at `/mcp` where every caller sends its own `Authorization: Bearer xtk_...`,
+  checked with the API before the session (401 without one or for a refused key;
+  no server-side key; `path` refused). Never tunnelled; on a VPS it may sit behind
+  the API's reverse proxy for cloud agents (`docs/vps-deploy.md`).
+  `xteink/client.py` is the stdlib API client behind the CLI and MCP.
 - **Web UI** (`web/`, Vite + React): built into `xteink/server/_webassets`
   (git-ignored, built by the Dockerfile). Behind Cloudflare Access it needs no
   key; on the LAN the first run asks for an API key.

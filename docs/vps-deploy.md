@@ -12,12 +12,34 @@ Placeholders: `<vps>` is the SSH target and `<host>` the public hostname.
 | Piece | Where | Reachable from |
 |-------|-------|----------------|
 | `api` container (main app 8780, device app 8781) | `<vps>:/opt/apps/apps/xteink`, compose project `xteink` | The host's loopback, and Caddy over the shared docker network as `xteink-api` |
-| Library data | Docker volume `xteink_xteink-data` | The container only. It is not backed up |
-| `mcp` container | Not started | Run the MCP server where the agent is, pointed at `https://<host>` |
+| Library data | Docker volume `xteink_xteink-data` | The container only. Back it up with an SQLite backup of `/data/library.db` plus `/data/files` |
+| `mcp` container (8782) | Same project | Caddy as `xteink-mcp`, at `https://<host>/mcp`, for agents that run in the cloud ([below](#mcp-for-cloud-agents)) |
 
 Two files on the host are not in this repository: `.env` (binds the published
-ports to `127.0.0.1`) and `compose.override.yaml` (joins the api to Caddy's
-network with the alias `xteink-api`).
+ports to `127.0.0.1`) and `compose.override.yaml` (joins the api and the mcp
+server to Caddy's network as `xteink-api` and `xteink-mcp`, and sets the MCP
+host check):
+
+```yaml
+services:
+  api:
+    networks:
+      default: {}
+      web:
+        aliases: [xteink-api]
+  mcp:
+    environment:
+      XTEINK_MCP_ALLOWED_HOSTS: <host>
+      XTEINK_MCP_ALLOWED_ORIGINS: https://<host>
+    networks:
+      default: {}
+      web:
+        aliases: [xteink-mcp]
+networks:
+  web:
+    external: true
+    name: apps_web
+```
 
 ## Public routes
 
@@ -40,6 +62,12 @@ web UI and `/docs` are not exposed.
   @device path /api/device/*
   handle @device {
     reverse_proxy xteink-api:8781
+  }
+
+  # Cloud agents: MCP over streamable HTTP, every request key-checked.
+  @mcp path /mcp /mcp/*
+  handle @mcp {
+    reverse_proxy xteink-mcp:8782
   }
 
   # Phone shortcut, agents and the CLI: every route needs an API key.
@@ -119,6 +147,31 @@ sync:
 ```bash
 XTEINK_URL=https://<host> XTEINK_API_KEY=<api-key> \
   uv run xteink device provision --lan-url "" --tunnel-url https://<host> --apply
+```
+
+## MCP for cloud agents
+
+An agent that runs on its own cloud computer (Grok Bot, for one) cannot start
+the MCP server on your machine or reach your LAN, so it connects to
+`https://<host>/mcp`. The MCP server checks every request's key with the API
+before the MCP session sees it (401 for a missing or refused key, see
+[`mcp.md`](mcp.md#streamable-http-lan-tailnet-mesh)), and each tool is an API
+call made with that key: the route exposes nothing `/api/*` does not.
+
+Give each agent its own key, so it can be revoked alone:
+
+```bash
+docker compose exec api python -m xteink.server create-key grok
+```
+
+In the agent, add a custom MCP server with the URL `https://<host>/mcp` and the
+header `Authorization: Bearer <that key>`. Where the agent can limit tools,
+`save_url` is the one that sends a page to the reader.
+
+Start or update it with the api:
+
+```bash
+docker compose up -d --build api mcp
 ```
 
 ## Firmware updates

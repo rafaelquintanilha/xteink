@@ -150,6 +150,12 @@ class Client:
             return AuthenticationError(status, code or "unauthorized", detail or "unauthorized")
         return ApiError(status, code or f"http_{status}", detail or "request failed")
 
+    # -- session -----------------------------------------------------------
+
+    def whoami(self) -> dict:
+        """How this key authenticates (``via``, ``identity``). Raises on a bad key."""
+        return self._request("GET", "/api/whoami")
+
     # -- library -----------------------------------------------------------
 
     def list_library(
